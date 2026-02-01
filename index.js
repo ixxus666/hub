@@ -5,7 +5,7 @@ const {
   createAudioResource,
   AudioPlayerStatus
 } = require("@discordjs/voice");
-const ytdlp = require("yt-dlp-core");
+const { exec } = require("yt-dlp-exec");
 
 const client = new Client({
   intents: [
@@ -29,9 +29,13 @@ async function playNext(guild, voiceChannel, textChannel) {
   if (queue.length === 0) return;
 
   const song = queue.shift();
-  const stream = ytdlp.stream(song, { filter: "audioonly" });
+  const stream = exec(song, {
+  o: "-",
+  q: "",
+  f: "bestaudio"
+}).stdout;
 
-  const resource = createAudioResource(stream);
+const resource = createAudioResource(stream);
   const player = createAudioPlayer();
 
   const connection = joinVoiceChannel({
