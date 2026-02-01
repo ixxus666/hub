@@ -1,4 +1,3 @@
-// index.js
 const { Client, GatewayIntentBits } = require("discord.js");
 const {
   joinVoiceChannel,
@@ -8,6 +7,7 @@ const {
   NoSubscriberBehavior,
 } = require("@discordjs/voice");
 const ytdl = require("ytdl-core");
+const ytSearch = require("yt-search"); // For search by name
 
 const client = new Client({
   intents: [
@@ -18,7 +18,7 @@ const client = new Client({
   ],
 });
 
-const prefix = "!";
+const prefix = "/";
 const queue = new Map(); // per-guild queue
 const players = new Map(); // per-guild audio player
 
@@ -30,35 +30,42 @@ client.on("messageCreate", async (message) => {
 
   const args = message.content.slice(prefix.length).trim().split(/ +/);
   const command = args.shift().toLowerCase();
-
-  // ----- Require user in a VC for play -----
   const voiceChannel = message.member.voice.channel;
+
   if (command === "play") {
-    if (!voiceChannel) return message.reply("You need to be in a voice channel to play music!");
+    if (!voiceChannel)
+      return message.reply("You need to be in a voice channel to play music!");
     const permissions = voiceChannel.permissionsFor(message.client.user);
     if (!permissions.has("Connect") || !permissions.has("Speak"))
       return message.reply("I need permission to join and speak in your VC!");
 
-    const query = args[0];
-    if (!query) return message.reply("Provide a valid YouTube URL!");
-    if (!ytdl.validateURL(query)) return message.reply("Invalid YouTube URL!");
+    const query = args.join(" ");
+    if (!query) return message.reply("Provide a song name or YouTube/Spotify URL!");
 
-    const songInfo = await ytdl.getInfo(query);
-    const song = {
-      title: songInfo.videoDetails.title,
-      url: songInfo.videoDetails.video_url,
-    };
+    let song;
 
+    // If it's a YouTube URL
+    if (ytdl.validateURL(query)) {
+      const songInfo = await ytdl.getInfo(query);
+      song = { title: songInfo.videoDetails.title, url: songInfo.videoDetails.video_url };
+    } else {
+      // Otherwise, search on YouTube by name (also works for Spotify track names)
+      const result = await ytSearch(query);
+      if (!result || !result.videos.length)
+        return message.reply("No song found for that query!");
+      const video = result.videos[0];
+      song = { title: video.title, url: video.url };
+    }
+
+    // Add to queue
     if (!queue.has(message.guild.id)) queue.set(message.guild.id, []);
     queue.get(message.guild.id).push(song);
-
     message.reply(`🎶 Added **${song.title}** to the queue!`);
 
     if (queue.get(message.guild.id).length === 1)
       playSong(message.guild, voiceChannel, queue.get(message.guild.id)[0]);
   }
 
-  // ----- SKIP -----
   if (command === "skip") {
     const serverQueue = queue.get(message.guild.id);
     if (!serverQueue || !serverQueue.length) return message.reply("Nothing to skip!");
@@ -67,17 +74,13 @@ client.on("messageCreate", async (message) => {
     else message.reply("Queue ended!");
   }
 
-  // ----- STOP -----
   if (command === "stop") {
-    const serverQueue = queue.get(message.guild.id);
-    if (!serverQueue) return message.reply("Nothing is playing!");
     queue.set(message.guild.id, []);
     const player = players.get(message.guild.id);
     if (player) player.stop();
     message.reply("Stopped playback and cleared queue.");
   }
 
-  // ----- PAUSE -----
   if (command === "pause") {
     const player = players.get(message.guild.id);
     if (!player) return message.reply("Nothing is playing!");
@@ -85,7 +88,6 @@ client.on("messageCreate", async (message) => {
     message.reply("⏸ Paused the music.");
   }
 
-  // ----- RESUME -----
   if (command === "resume") {
     const player = players.get(message.guild.id);
     if (!player) return message.reply("Nothing is playing!");
@@ -93,7 +95,6 @@ client.on("messageCreate", async (message) => {
     message.reply("▶ Resumed the music.");
   }
 
-  // ----- QUEUE -----
   if (command === "queue") {
     const serverQueue = queue.get(message.guild.id);
     if (!serverQueue || !serverQueue.length) return message.reply("Queue is empty!");
@@ -102,14 +103,13 @@ client.on("messageCreate", async (message) => {
   }
 });
 
-// ----- FUNCTION TO PLAY SONG -----
 async function playSong(guild, voiceChannel, song) {
   if (!song) return;
 
   const connection = joinVoiceChannel({
     channelId: voiceChannel.id,
     guildId: guild.id,
-    adapterCreator: guild.voiceAdapterCreator,
+    adapterCreator: voiceChannel.guild.voiceAdapterCreator,
   });
 
   const stream = ytdl(song.url, { filter: "audioonly", quality: "highestaudio" });
@@ -146,7 +146,6 @@ async function playSong(guild, voiceChannel, song) {
   player.play(resource);
 }
 
-// ----- ERROR HANDLING -----
 process.on("unhandledRejection", console.error);
 process.on("uncaughtException", console.error);
 
