@@ -1,174 +1,166 @@
-const {
-  Client,
-  GatewayIntentBits,
-  SlashCommandBuilder,
-  REST,
-  Routes,
-  EmbedBuilder
-} = require("discord.js");
-
+// index.js
+const { Client, GatewayIntentBits } = require("discord.js");
 const {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
-  AudioPlayerStatus
+  AudioPlayerStatus,
+  NoSubscriberBehavior,
 } = require("@discordjs/voice");
-
-const playdl = require("play-dl");
+const ytdl = require("ytdl-core");
+const ytSearch = require("yt-search");
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates
-  ]
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
+  ],
 });
 
-const queues = new Map();
-const players = new Map();
-const loops = new Map();
+const prefix = "!";
+const queue = new Map(); // Queue per guild
 
-function getQueue(guildId) {
-  if (!queues.has(guildId)) queues.set(guildId, []);
-  return queues.get(guildId);
-}
+client.once("ready", () => console.log(`${client.user.tag} is online!`));
 
+client.on("messageCreate", async (message) => {
+  if (!message.guild || message.author.bot) return;
+  if (!message.content.startsWith(prefix)) return;
 
+  const args = message.content.slice(prefix.length).trim().split(/ +/);
+  const command = args.shift().toLowerCase();
 
+  const voiceChannel = message.member.voice.channel;
+  if (!voiceChannel) return message.reply("You need to be in a voice channel first!");
+  const permissions = voiceChannel.permissionsFor(message.client.user);
+  if (!permissions.has("Connect") || !permissions.has("Speak"))
+    return message.reply("I need permissions to join and speak in your VC!");
 
-/* ---------------- SLASH COMMANDS ---------------- */
+  if (command === "play") {
+    const query = args.join(" ");
+    if (!query) return message.reply("Provide a song name or URL!");
 
-const commands = [
-  new SlashCommandBuilder().setName("play").setDescription("Play a song")
-    .addStringOption(o => o.setName("query").setDescription("Song or URL").setRequired(true)),
-
-  new SlashCommandBuilder().setName("pause").setDescription("Pause playback"),
-  new SlashCommandBuilder().setName("resume").setDescription("Resume playback"),
-  new SlashCommandBuilder().setName("skip").setDescription("Skip current song"),
-  new SlashCommandBuilder().setName("stop").setDescription("Stop music"),
-  new SlashCommandBuilder().setName("leave").setDescription("Leave voice channel"),
-  new SlashCommandBuilder().setName("queue").setDescription("Show queue"),
-  new SlashCommandBuilder().setName("nowplaying").setDescription("Now playing"),
-  new SlashCommandBuilder().setName("loop").setDescription("Toggle loop"),
-  new SlashCommandBuilder().setName("clear").setDescription("Clear queue"),
-  new SlashCommandBuilder().setName("shuffle").setDescription("Shuffle queue"),
-  new SlashCommandBuilder().setName("ping").setDescription("Bot latency"),
-  new SlashCommandBuilder().setName("help").setDescription("Show commands")
-].map(c => c.toJSON());
-
-client.once("ready", async () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-  await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-  console.log("Slash commands registered");
-});
-
-/* ---------------- PLAYER ---------------- */
-
-async function playNext(interaction) {
-  const queue = getQueue(interaction.guild.id);
-  if (!queue.length) return;
-
-  const song = queue[0];
-  const stream = await playdl.stream(song.url);
-
-  const resource = createAudioResource(stream.stream, { inputType: stream.type });
-  const player = createAudioPlayer();
-
-  players.set(interaction.guild.id, player);
-
-  const connection = joinVoiceChannel({
-    channelId: interaction.member.voice.channel.id,
-    guildId: interaction.guild.id,
-    adapterCreator: interaction.guild.voiceAdapterCreator
-  });
-
-  connection.subscribe(player);
-  player.play(resource);
-
-  player.on(AudioPlayerStatus.Idle, () => {
-    if (!loops.get(interaction.guild.id)) queue.shift();
-    playNext(interaction);
-  });
-}
-
-/* ---------------- HANDLER ---------------- */
-
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  const queue = getQueue(interaction.guild.id);
-  const vc = interaction.member.voice.channel;
-
-  switch (interaction.commandName) {
-    case "play": {
-      if (!vc) return interaction.reply({ content: "Join a voice channel first.", ephemeral: true });
-
-      const query = interaction.options.getString("query");
-      const info = await playdl.search(query, { limit: 1 });
-      if (!info.length) return interaction.reply("No results found.");
-
-      queue.push({ title: info[0].title, url: info[0].url });
-      await interaction.reply(`🎶 Added **${info[0].title}**`);
-
-      if (queue.length === 1) playNext(interaction);
-      break;
+    let songInfo;
+    if (ytdl.validateURL(query)) {
+      songInfo = await ytdl.getInfo(query);
+    } else {
+      const { videos } = await ytSearch(query);
+      if (!videos.length) return message.reply("No song found!");
+      songInfo = await ytdl.getInfo(videos[0].url);
     }
 
-    case "pause":
-      players.get(interaction.guild.id)?.pause();
-      interaction.reply("⏸ Paused");
-      break;
+    const song = {
+      title: songInfo.videoDetails.title,
+      url: songInfo.videoDetails.video_url,
+    };
 
-    case "resume":
-      players.get(interaction.guild.id)?.unpause();
-      interaction.reply("▶️ Resumed");
-      break;
+    if (!queue.has(message.guild.id)) queue.set(message.guild.id, []);
+    queue.get(message.guild.id).push(song);
 
-    case "skip":
-      players.get(interaction.guild.id)?.stop();
-      interaction.reply("⏭ Skipped");
-      break;
+    message.reply(`🎶 **${song.title}** added to the queue!`);
 
-    case "stop":
-      queue.length = 0;
-      players.get(interaction.guild.id)?.stop();
-      interaction.reply("⏹ Stopped");
-      break;
+    if (queue.get(message.guild.id).length === 1)
+      playSong(message.guild, voiceChannel, queue.get(message.guild.id)[0]);
+  }
 
-    case "queue":
-      if (!queue.length) return interaction.reply("Queue is empty");
-      interaction.reply(queue.map((s, i) => `${i + 1}. ${s.title}`).join("\n"));
-      break;
+  if (command === "skip") {
+    const serverQueue = queue.get(message.guild.id);
+    if (!serverQueue || !serverQueue.length) return message.reply("Nothing to skip!");
+    serverQueue.shift();
+    if (serverQueue.length > 0) playSong(message.guild, voiceChannel, serverQueue[0]);
+    else message.reply("Queue ended!");
+  }
 
-    case "nowplaying":
-      if (!queue.length) return interaction.reply("Nothing playing");
-      interaction.reply(`🎶 Now playing **${queue[0].title}**`);
-      break;
+  if (command === "stop") {
+    const serverQueue = queue.get(message.guild.id);
+    if (!serverQueue) return message.reply("Nothing is playing!");
+    queue.set(message.guild.id, []);
+    if (voiceChannel.members.has(client.user.id)) {
+      const connection = joinVoiceChannel({
+        channelId: voiceChannel.id,
+        guildId: message.guild.id,
+        adapterCreator: message.guild.voiceAdapterCreator,
+      });
+      connection.destroy();
+    }
+    message.reply("Stopped playback and cleared queue.");
+  }
 
-    case "loop":
-      loops.set(interaction.guild.id, !loops.get(interaction.guild.id));
-      interaction.reply(`🔁 Loop ${loops.get(interaction.guild.id) ? "enabled" : "disabled"}`);
-      break;
+  if (command === "pause") {
+    const player = getPlayer(message.guild.id);
+    if (!player) return message.reply("Nothing is playing!");
+    player.pause();
+    message.reply("⏸ Paused the music.");
+  }
 
-    case "clear":
-      queue.length = 0;
-      interaction.reply("🧹 Queue cleared");
-      break;
+  if (command === "resume") {
+    const player = getPlayer(message.guild.id);
+    if (!player) return message.reply("Nothing is playing!");
+    player.unpause();
+    message.reply("▶ Resumed the music.");
+  }
 
-    case "shuffle":
-      queue.sort(() => Math.random() - 0.5);
-      interaction.reply("🔀 Queue shuffled");
-      break;
-
-    case "ping":
-      interaction.reply(`🏓 Pong: ${client.ws.ping}ms`);
-      break;
-
-    case "help":
-      interaction.reply("🎵 Rhythm-style commands: /play /pause /resume /skip /queue /loop /nowplaying");
-      break;
+  if (command === "queue") {
+    const serverQueue = queue.get(message.guild.id);
+    if (!serverQueue || !serverQueue.length) return message.reply("Queue is empty!");
+    const queueMsg = serverQueue.map((s, i) => `${i + 1}. ${s.title}`).join("\n");
+    message.reply(`🎵 **Current Queue:**\n${queueMsg}`);
   }
 });
 
+// Map to store audio players per guild
+const players = new Map();
 
-client.login(process.env.TOKEN);
+function getPlayer(guildId) {
+  return players.get(guildId);
+}
+
+async function playSong(guild, voiceChannel, song) {
+  if (!song) return;
+
+  const connection = joinVoiceChannel({
+    channelId: voiceChannel.id,
+    guildId: guild.id,
+    adapterCreator: guild.voiceAdapterCreator,
+  });
+
+  const stream = ytdl(song.url, { filter: "audioonly", quality: "highestaudio" });
+  const resource = createAudioResource(stream);
+  let player = getPlayer(guild.id);
+
+  if (!player) {
+    player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+    players.set(guild.id, player);
+    connection.subscribe(player);
+
+    player.on(AudioPlayerStatus.Idle, () => {
+      const serverQueue = queue.get(guild.id);
+      serverQueue.shift();
+      if (serverQueue.length > 0) playSong(guild, voiceChannel, serverQueue[0]);
+      else {
+        connection.destroy();
+        players.delete(guild.id);
+      }
+    });
+
+    player.on("error", (err) => {
+      console.error(err);
+      const serverQueue = queue.get(guild.id);
+      serverQueue.shift();
+      if (serverQueue.length > 0) playSong(guild, voiceChannel, serverQueue[0]);
+      else {
+        connection.destroy();
+        players.delete(guild.id);
+      }
+    });
+  }
+
+  player.play(resource);
+}
+
+// Error handling
+process.on("unhandledRejection", console.error);
+process.on("uncaughtException", console.error);
+
+client.login(process.env.DISCORD_TOKEN);
