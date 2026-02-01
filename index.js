@@ -32,6 +32,67 @@ function getQueue(guildId) {
   return queues.get(guildId);
 }
 
+
+/* ---------------- AUTOMOD CONFIG ---------------- */
+
+const bannedWords = [
+  "nigger",
+  "nigga",
+  "fuck",
+  "scam",
+  "free nitro"
+];
+
+const spamMap = new Map();
+const SPAM_LIMIT = 5;      // messages
+const SPAM_TIME = 4000;    // ms
+
+const blockLinks = true;
+
+/* ---------------- AUTOMOD HANDLER ---------------- */
+
+client.on("messageCreate", async message => {
+  if (message.author.bot || !message.guild) return;
+
+  const content = message.content.toLowerCase();
+
+  /* 🚫 BAD WORD FILTER */
+  if (bannedWords.some(word => content.includes(word))) {
+    await message.delete().catch(() => {});
+    return message.channel.send(
+      `⚠️ ${message.author}, that language is not allowed.`
+    );
+  }
+
+  /* 🔗 LINK BLOCKER */
+  if (blockLinks && /(discord\.gg|https?:\/\/)/i.test(content)) {
+    await message.delete().catch(() => {});
+    return message.channel.send(
+      `🔗 ${message.author}, links are not allowed here.`
+    );
+  }
+
+  /* 🔁 SPAM DETECTION */
+  const now = Date.now();
+  const userData = spamMap.get(message.author.id) || { count: 0, last: now };
+
+  if (now - userData.last < SPAM_TIME) {
+    userData.count++;
+    if (userData.count >= SPAM_LIMIT) {
+      await message.delete().catch(() => {});
+      spamMap.set(message.author.id, { count: 0, last: now });
+      return message.channel.send(
+        `⛔ ${message.author}, stop spamming.`
+      );
+    }
+  } else {
+    userData.count = 1;
+  }
+
+  userData.last = now;
+  spamMap.set(message.author.id, userData);
+});
+
 /* ---------------- SLASH COMMANDS ---------------- */
 
 const commands = [
@@ -167,63 +228,5 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-/* ---------------- AUTOMOD CONFIG ---------------- */
-
-const bannedWords = [
-  "badword1",
-  "badword2",
-  "scam",
-  "free nitro"
-];
-
-const spamMap = new Map();
-const SPAM_LIMIT = 5;      // messages
-const SPAM_TIME = 4000;    // ms
-
-const blockLinks = true;
-
-/* ---------------- AUTOMOD HANDLER ---------------- */
-
-client.on("messageCreate", async message => {
-  if (message.author.bot || !message.guild) return;
-
-  const content = message.content.toLowerCase();
-
-  /* 🚫 BAD WORD FILTER */
-  if (bannedWords.some(word => content.includes(word))) {
-    await message.delete().catch(() => {});
-    return message.channel.send(
-      `⚠️ ${message.author}, that language is not allowed.`
-    );
-  }
-
-  /* 🔗 LINK BLOCKER */
-  if (blockLinks && /(discord\.gg|https?:\/\/)/i.test(content)) {
-    await message.delete().catch(() => {});
-    return message.channel.send(
-      `🔗 ${message.author}, links are not allowed here.`
-    );
-  }
-
-  /* 🔁 SPAM DETECTION */
-  const now = Date.now();
-  const userData = spamMap.get(message.author.id) || { count: 0, last: now };
-
-  if (now - userData.last < SPAM_TIME) {
-    userData.count++;
-    if (userData.count >= SPAM_LIMIT) {
-      await message.delete().catch(() => {});
-      spamMap.set(message.author.id, { count: 0, last: now });
-      return message.channel.send(
-        `⛔ ${message.author}, stop spamming.`
-      );
-    }
-  } else {
-    userData.count = 1;
-  }
-
-  userData.last = now;
-  spamMap.set(message.author.id, userData);
-});
 
 client.login(process.env.TOKEN);
