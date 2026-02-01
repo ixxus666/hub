@@ -11,6 +11,6 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "@discordjs/voice": "^0.16.0",
-    "yt-dlp-exec": "^2.5.4"
+    "play-dl": "^1.9.7"
   }
 }
