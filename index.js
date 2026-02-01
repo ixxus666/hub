@@ -5,7 +5,7 @@ const {
   createAudioResource,
   AudioPlayerStatus
 } = require("@discordjs/voice");
-const { exec } = require("yt-dlp-exec");
+const playdl = require("play-dl");
 
 const client = new Client({
   intents: [
