@@ -228,5 +228,81 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
+const warnings = {}; // Format: { userId: count }
+
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}!`);
+});
+
+// --- Utility Functions ---
+async function logToModChannel(guild, title, description, color = 0xff0000) {
+    const channel = guild.channels.cache.find(c => c.name === config.logChannel);
+    if (!channel) return;
+    const embed = new EmbedBuilder()
+        .setTitle(title)
+        .setDescription(description)
+        .setColor(color)
+        .setTimestamp();
+    channel.send({ embeds: [embed] });
+}
+
+// --- Message Monitoring (Auto-Mod) ---
+client.on('messageCreate', async (message) => {
+    if (message.author.bot || !message.guild) return;
+
+    // Bypass for Mod Role
+    if (message.member.roles.cache.some(r => r.name === config.bypassRole)) return;
+
+    // 1. Scam Phrase Detection
+    if (config.settings.scamFilter) {
+        const isScam = config.scamPhrases.some(phrase => message.content.toLowerCase().includes(phrase));
+        if (isScam) {
+            await message.delete();
+            await message.member.timeout(600000, 'Sending scam links'); // 10 mins
+            return logToModChannel(message.guild, '❌ Scam Detected', `${message.author.tag} was timed out for 10m for scam content.`);
+        }
+    }
+
+    // 2. Caps Lock Detection (More than 70% caps and length > 10)
+    if (config.settings.capsFilter && message.content.length > 10) {
+        const caps = message.content.replace(/[^A-Z]/g, "").length;
+        if (caps / message.content.length > 0.7) {
+            await message.delete();
+            message.channel.send(`${message.author}, please stop using all caps!`).then(m => setTimeout(() => m.delete(), 3000));
+            return;
+        }
+    }
+
+    // 3. Auto Slowmode (Triggered by rapid messages)
+    if (config.settings.autoSlowmode) {
+        // Simple logic: if 5 messages arrive in 3 seconds (advanced version requires a message cache)
+        // For this demo, we'll keep it simple: manual check or reactive.
+    }
+});
+
+// --- Interaction Handler (Commands) ---
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+
+    const { commandName, options } = interaction;
+
+    // /warnings command
+    if (commandName === 'warnings') {
+        const target = options.getUser('user');
+        const count = warnings[target.id] || 0;
+        await interaction.reply(`${target.username} has **${count}** warnings.`);
+    }
+
+    // /config command (Toggle settings)
+    if (commandName === 'config') {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return interaction.reply({ content: "Admin only!", ephemeral: true });
+        }
+        const setting = options.getString('setting');
+        const state = options.getBoolean('state');
+        config.settings[setting] = state;
+        await interaction.reply(`Setting **${setting}** is now **${state ? 'Enabled' : 'Disabled'}**.`);
+    }
+});
 
 client.login(process.env.TOKEN);
